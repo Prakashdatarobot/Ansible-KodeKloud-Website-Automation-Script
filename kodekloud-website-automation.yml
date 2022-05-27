@@ -1,0 +1,136 @@
+-
+ name: KodeKloud E-Commerce Website Deployment Automation
+ hosts: localhost
+ vars:
+   mysql_password: ecompassword
+   packages:
+     - firewalld
+     - mariadb-server
+     - httpd
+     - php
+     - php-mysql
+     - git
+     - python3-pip
+ tasks:
+  -
+    name: Install All Packages
+    yum: 'name={{item}} state=present'
+    with_items: "{{packages}}"
+
+  - name: "Install ansible python3 mysql dependency"
+    yum:
+     name:
+      - python3-PyMySQL
+      - python-PyMySQL
+
+  - #name: Make sure pymysql is present
+    #become: true # needed if the other tasks are not played as root
+    #pip:
+     #name: pymysql
+     #state: present
+
+
+  -
+    #name: Installing pip
+    #yum:
+     #name:
+     #- python2-pip
+     #- python-pymysql
+     #- python3-pymysql
+     #- python3
+     #- python
+     #state: present
+
+  - #name: Installing pymysql for dependency
+    #pip:
+     #name: pymysql
+     #executable: pip3.3
+     #state: present
+
+  -
+    name: Configure And Start FirewallD Service
+    service:
+      name: firewalld
+      enabled: true
+      state: started
+
+  -
+    name: Configure Maria DB  And Start Maria DB
+    service:
+      name: mariadb
+      enabled: true
+      state: started
+
+
+  - name: FirewallD rules
+    firewalld:
+     permanent: yes
+     immediate: yes
+     port: "{{item.port}}/{{item.proto}}"
+     state: "{{item.state}}"
+     zone: "{{item.zone}}"
+    with_items:
+     - {port: "3306", proto: "tcp", state: "enabled", zone: "public" }
+     - {port: "80", proto: "tcp", state: "enabled", zone: "public" }
+
+  - name: reload service firewalld
+    systemd:
+     name: firewalld
+     state: reloaded
+
+
+  -
+    #name: Create Users and Table In Maria DB
+    #script: /tmp/users-create.sh
+    #shell: 'cat /tmp/create-table.sql'
+    #register: command_output
+    #command: mysql < command_output
+
+  -
+    name: Configure Web server and start
+    service:
+     name: httpd
+     enabled: true
+     state: started
+
+  - name: Create database user with password and all database privileges and 'WITH GRANT OPTION'
+    mysql_user:
+     name: ecomuser
+     password: ecompassword
+     priv: '*.*:ALL,GRANT'
+     state: present
+
+  - name: Create a new database with name 'ecomdb'
+    mysql_db:
+     name: ecomdb
+     state: present
+
+  - name: Reload privilege tables
+    command: 'mysql -ne "{{ item }}"'
+    with_items:
+     - FLUSH PRIVILEGES
+    changed_when: False
+
+  - name: insert sample data into database
+    mysql_db: name=ecomdb state=import target=/tmp/dump.sql login_user=ecomuser login_password="{{ mysql_password }}"
+
+
+  -
+    name: Download the Code from Git
+    git:
+     repo: https://github.com/kodekloudhub/learning-app-ecommerce.git
+     dest: /var/www/html/
+     clone: yes
+     update: yes
+
+  - name: Change the hostname in index.php file
+    command: sudo sed -i 's/172.20.1.101/localhost/g' /var/www/html/index.php
+
+  - name: Change Directory in httpd-conf file
+    command: sudo sed -i 's/index.html/index.php/g' /etc/httpd/conf/httpd.conf
+
+
+  -
+    name: Test The connectivity
+    uri:
+     url: http://localhost:80
